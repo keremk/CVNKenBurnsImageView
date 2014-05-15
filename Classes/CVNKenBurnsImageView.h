@@ -10,6 +10,7 @@
 
 @interface CVNKenBurnsImageView : UIView
 @property(nonatomic, copy) NSArray *animationImages;
+@property(nonatomic, assign) NSTimeInterval animationDuration;
 @property(nonatomic, assign) NSInteger animationRepeatCount;
 
 - (instancetype) initWithAnimationImages:(NSArray *) animationImages;

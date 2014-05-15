@@ -14,7 +14,7 @@ static inline NSString * ImageCacheKeyFromURLRequest(NSURLRequest *request) {
   return [[request URL] absoluteString];
 }
 
-- (UIImage *)cachedImageForRequest:(NSURLRequest *)request {
+- (UIImage *) cachedImageForRequest:(NSURLRequest *)request {
   switch ([request cachePolicy]) {
     case NSURLRequestReloadIgnoringCacheData:
     case NSURLRequestReloadIgnoringLocalAndRemoteCacheData:
@@ -26,8 +26,8 @@ static inline NSString * ImageCacheKeyFromURLRequest(NSURLRequest *request) {
 	return [self objectForKey:ImageCacheKeyFromURLRequest(request)];
 }
 
-- (void)cacheImage:(UIImage *)image
-        forRequest:(NSURLRequest *)request {
+- (void) cacheImage:(UIImage *)image
+         forRequest:(NSURLRequest *)request {
   if (image && request) {
     [self setObject:image forKey:ImageCacheKeyFromURLRequest(request)];
   }
