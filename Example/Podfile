@@ -1,4 +1,4 @@
 platform :ios, '7.0'
 
 pod 'CVNKenBurnsImageView', :path=>'../CVNKenBurnsImageView.podspec'
-
+pod 'Expecta', '~> 0.2'

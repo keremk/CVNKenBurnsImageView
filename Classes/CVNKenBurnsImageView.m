@@ -97,6 +97,7 @@ typedef struct CVNKenBurnsStep {
   _animationRepeatCount = -1;  // Always repeat
   self.imageList = [NSMutableArray array];
   self.imageRequestOperations = [NSMutableArray array];
+  self.clipsToBounds = YES;
 }
 
 - (void) startAnimating {
@@ -107,7 +108,14 @@ typedef struct CVNKenBurnsStep {
 }
 
 - (void) stopAnimating {
-  _isAnimating = NO;
+  if (_isAnimating) {
+    _isAnimating = NO;
+    [self cancelLoadingImages];
+    if (self.nextImageTimer && [self.nextImageTimer isValid]) {
+      [self.nextImageTimer invalidate];
+      self.nextImageTimer = nil;
+    }
+  }
 }
 
 - (void) setAnimationImages:(NSArray *) animationImages {
@@ -154,11 +162,19 @@ typedef struct CVNKenBurnsStep {
         [self addToNetworkQueueWithURL:url];
       }
     } else if ([[obj class] isSubclassOfClass:[NSString class]]) {
-      CVNImage *cvnImage = [CVNImage imageWithBlock:^(CVNImage *image) {
-        image.imageSource = CVNLocalFileSourced;
-        image.fileSystemPath = obj;
-      }];
-      [self.imageList addObject:cvnImage];
+      NSString *imageString = (NSString *) obj;
+      NSRange httpOccurance = [imageString rangeOfString:@"http"];
+      if (httpOccurance.location == NSNotFound) {
+        CVNImage *cvnImage = [CVNImage imageWithBlock:^(CVNImage *image) {
+          image.imageSource = CVNLocalFileSourced;
+          image.fileSystemPath = obj;
+        }];
+        [self.imageList addObject:cvnImage];
+      } else {
+        // This is a URL string
+        NSURL *url = [NSURL URLWithString:imageString];
+        [self addToNetworkQueueWithURL:url];
+      }
     } else if ([[obj class] isSubclassOfClass:[UIImage class]]) {
       CVNImage *cvnImage = [CVNImage imageWithBlock:^(CVNImage *image) {
         image.imageSource = CVNMemorySourced;
@@ -183,7 +199,7 @@ typedef struct CVNKenBurnsStep {
     requestOperation.responseSerializer = [self imageResponseSerializer];
     [requestOperation setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject) {
       __strong __typeof(weakSelf) strongSelf = weakSelf;
-      [strongSelf removeImageRequestOperation:requestOperation];
+      [strongSelf removeImageRequestOperation:operation];
       CVNImage *cvnImage = [CVNImage imageWithBlock:^(CVNImage *image) {
         image.imageSource = CVNNetworkSourced;
         image.loadedImage = responseObject;
@@ -228,9 +244,55 @@ typedef struct CVNKenBurnsStep {
 - (CGSize) resizeImageWithSize:(CGSize) imageSize enlargeRatio:(CGFloat) enlargeRatio {
   CGFloat viewWidth = self.bounds.size.width;
   CGFloat viewHeight = self.bounds.size.height;
+  CGFloat resizeRatio = 1;
   
-  // Keep aspect ratio
-  CGFloat resizeRatio = MIN(viewWidth / imageSize.width, viewHeight / imageSize.height);
+  CGFloat widthDiff = fabsf(imageSize.width - viewWidth);
+  CGFloat heightDiff = fabsf(imageSize.height - viewHeight);
+  
+  if (imageSize.width > viewWidth) {
+    // Image is wider than the view it is in
+    if (imageSize.height > viewHeight) {
+      // Image is also heigher than the view it is in:
+      if (widthDiff > heightDiff) {
+        // Resize based on height
+        resizeRatio = viewHeight / imageSize.height;
+      } else {
+        // Resize based on width
+        resizeRatio = viewWidth / imageSize.width;
+      }
+    } else {
+      // Image is not heigher than the view it is in:
+      if (widthDiff > heightDiff) {
+        // Resize based on width
+        resizeRatio = imageSize.width / viewWidth;
+      } else {
+        // Resize based on height
+        resizeRatio = viewHeight /imageSize.height;
+      }
+    }
+  } else {
+    // Image is not wider than the view it is in
+    if (imageSize.height > viewHeight) {
+      // Image is heigher than the view it is in
+      if (widthDiff > heightDiff) {
+        // Resize based on height
+        resizeRatio = viewWidth / imageSize.width;  // TODO: Needs to be checked!
+      } else {
+        // Resize based on width
+        resizeRatio = viewWidth / imageSize.width;
+      }
+    } else {
+      // Image is not heigher than the view it is in
+      if (widthDiff > heightDiff) {
+        // Resize based on width
+        resizeRatio = viewWidth / imageSize.width;
+      } else {
+        // Resize based on height
+        resizeRatio = viewHeight /imageSize.height;
+      }
+    }
+  }
+  
   return CGSizeMake(imageSize.width * resizeRatio * enlargeRatio,
                     imageSize.height * resizeRatio * enlargeRatio);
 }
@@ -278,23 +340,36 @@ typedef struct CVNKenBurnsStep {
                                                        selector:@selector(animateNextImage)
                                                        userInfo:nil
                                                         repeats:YES];
-  [_nextImageTimer fire];
+  [self.nextImageTimer fire];
 }
 
 - (void) animateNextImage {
   self.currentImageIndex++;
   
   UIImage *image = self.currentImage;
-  
+
   CGSize newSize = [self resizeImageWithSize:image.size enlargeRatio:enlargeRatio];
+
   CVNKenBurnsStep randomAnimation = [self randomAnimationStepWithImageSize:newSize];
   
+  UIView *imageView = [self imageViewForAnimation:randomAnimation size:newSize forImage:image];
   
+  [self addTransition];
+  
+  [self removePreviousView];
+  
+  [self addSubview:imageView];
+  
+  [self generateAnimation:randomAnimation forView:imageView];
+  
+  [self incrementCurrentImageIndex];
+}
+
+- (UIView *) imageViewForAnimation:(CVNKenBurnsStep) randomAnimation
+                          size:(CGSize) newSize
+                      forImage:(UIImage *) image {
   UIView *imageView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, newSize.width, newSize.height)];
   imageView.backgroundColor = [UIColor blackColor];
-  
-  //    NSLog(@"W: IW:%f OW:%f FW:%f MX:%f",image.size.width, optimusWidth, frameWidth, maxMoveX);
-  //    NSLog(@"H: IH:%f OH:%f FH:%f MY:%f\n",image.size.height, optimusHeight, frameHeight, maxMoveY);
   
   CALayer *picLayer    = [CALayer layer];
   picLayer.contents    = (id)image.CGImage;
@@ -304,21 +379,25 @@ typedef struct CVNKenBurnsStep {
   
   [imageView.layer addSublayer:picLayer];
   
+  return imageView;
+}
+
+- (void) addTransition {
   CATransition *animation = [CATransition animation];
   [animation setDuration:1];
   [animation setType:kCATransitionFade];
   [[self layer] addAnimation:animation forKey:nil];
-  
-  // Remove the previous view
+}
+
+- (void) removePreviousView {
   if ([[self subviews] count] > 0){
     UIView *oldImageView = [[self subviews] objectAtIndex:0];
     [oldImageView removeFromSuperview];
     oldImageView = nil;
   }
-  
-  [self addSubview:imageView];
-  
-  // Generates the animation
+}
+
+- (void) generateAnimation:(CVNKenBurnsStep) randomAnimation forView:(UIView *) imageView {
   [UIView beginAnimations:nil context:NULL];
   [UIView setAnimationDuration:self.animationDuration + 2];
   [UIView setAnimationCurve:UIViewAnimationCurveEaseIn];
@@ -331,8 +410,6 @@ typedef struct CVNKenBurnsStep {
   CGAffineTransform transform = CGAffineTransformConcat(zoomIn, combo1);
   imageView.transform = transform;
   [UIView commitAnimations];
-  
-  [self incrementCurrentImageIndex];
 }
 
 - (void) incrementCurrentImageIndex {
